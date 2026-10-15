@@ -423,6 +423,51 @@ fn format_cells_draws_its_labels_in_the_interface_language() {
 }
 
 #[test]
+fn addins_dialog_installs_disables_and_removes_an_addin() {
+    let mut book = gridcraft_engine::model::Workbook::new();
+    book.names.push(gridcraft_engine::model::DefinedName {
+        name: "Twice".into(),
+        scope: None,
+        formula: "LAMBDA(x,x*2)".into(),
+        comment: String::new(),
+        hidden: false,
+    });
+    let dir = std::env::temp_dir().join(format!("gridcraft-addins-ui-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("Tools.xlam");
+    std::fs::write(&file, gridcraft_engine::io::save_bytes(&book, "t.xlsx").unwrap()).unwrap();
+    let mut h = harness(blank());
+    h.state_mut().run("cell.set", json!({"cell": "A1", "input": "=Twice(21)"})).unwrap();
+    let a1 =
+        |h: &egui_kittest::Harness<'static, SheetApp>| h.state().session.active().unwrap().wb.active().unwrap().value(CellRef::parse("A1").unwrap());
+    // Home › Add-ins opens the dialog, as its keytip does.
+    h.state_mut().run_or_alert("home.addIns", json!({}));
+    h.run_steps(2);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name()), Some("addins"));
+    assert!(h.query_by_label("No add-ins are installed.").is_some());
+    // No picker in tests: the path field installs.
+    if let Some(d) = h.state_mut().dialog.as_mut() {
+        d.values.insert("path".into(), json!(file.to_str().unwrap()));
+    }
+    h.run_steps(2);
+    h.get_by_label("Install").click();
+    h.run_steps(2);
+    assert_eq!(a1(&h), Value::Number(42.0));
+    assert!(h.query_by_label("Twice").is_some(), "the dialog lists the add-in's functions");
+    // The dialog grew with the new add-in: let it settle so the click lands on the checkbox.
+    h.run_steps(6);
+    h.get_by_label("Tools").click();
+    h.run_steps(4);
+    assert!(!h.state().session.addins[0].enabled);
+    assert!(matches!(a1(&h), Value::Error(_)));
+    h.get_by_label("Remove").click();
+    h.run_steps(2);
+    assert!(h.state().session.addins.is_empty());
+    assert!(h.state().message.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn name_manager_new_and_edit_open_the_name_dialog_and_come_back() {
     // #238: New… in the Name Manager did nothing (the manager put itself back over the dialog it
     // had just opened).

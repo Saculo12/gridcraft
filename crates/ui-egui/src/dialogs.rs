@@ -36,7 +36,9 @@ pub struct Dialog {
     pub result: Option<Json>,
     /// "Show password" is ticked: password fields show their text.
     pub show_password: bool,
-    picture_inbox: Option<crate::Inbox>,
+    /// The browser file pick this dialog started (Insert Picture, Add-ins): it dies with the
+    /// dialog, so a late or cancelled pick never lands anywhere else.
+    file_inbox: Option<crate::Inbox>,
     picture_target: Option<(u64, usize)>,
     /// The dialog this one was opened from (Name Manager › New…): it comes back when this closes.
     back: Option<Box<Dialog>>,
@@ -70,7 +72,7 @@ impl Dialog {
             list_index: 0,
             result: None,
             show_password: false,
-            picture_inbox: None,
+            file_inbox: None,
             picture_target: None,
             back: None,
         }
@@ -88,7 +90,7 @@ impl Dialog {
             list_index: 0,
             result: None,
             show_password: false,
-            picture_inbox: None,
+            file_inbox: None,
             picture_target: None,
             back: None,
         }
@@ -720,6 +722,7 @@ impl Dialog {
                 )
             }
             "journal" => Dialog::custom("journal", "Action Journal", json!({})),
+            "addins" => Dialog::custom("addins", "Add-ins", json!({"path": ""})),
             "macros" => {
                 let mut d = Dialog::custom("macros", "Macros", json!({}));
                 d.result = app.session.run("view.macros", json!({})).ok();
@@ -1029,7 +1032,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
     let width = match d.name.as_str() {
         "formatCells" => 560.0,
         "about" => 660.0,
-        "insertFunction" | "commandSearch" | "nameManager" | "manageRules" | "journal" | "agents" | "macros" => 520.0,
+        "insertFunction" | "commandSearch" | "nameManager" | "manageRules" | "journal" | "agents" | "macros" | "addins" => 520.0,
         "recommendedCharts" => 600.0,
         "analysisToolPak" => 420.0,
         "solver" => 460.0,
@@ -1078,6 +1081,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                     });
                 }
                 "macros" => macros(ui, &mut d),
+                "addins" => addins(app, ui, &mut d),
                 "statistics" | "accessibility" | "errorChecking" | "evaluateFormula" | "comments" => {
                     let r = if d.name == "comments" {
                         app.session.active().and_then(|doc| doc.wb.active().map(|s| json!(s.comments.iter().map(|(c, m)| json!({"cell": c.a1(), "author": m.author, "text": m.text})).collect::<Vec<_>>())))
@@ -1091,11 +1095,11 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "insertPicture" => {
                     // A private inbox dies with this dialog; late browser results
                     // cannot affect a later picture choice or another workbook.
-                    let arrived = d.picture_inbox.as_ref().and_then(|inbox| {
+                    let arrived = d.file_inbox.as_ref().and_then(|inbox| {
                         inbox.lock().unwrap_or_else(std::sync::PoisonError::into_inner).pop()
                     });
                     if let Some((name, bytes)) = arrived {
-                        d.picture_inbox = None;
+                        d.file_inbox = None;
                         if bytes.len() > 16 * 1024 * 1024 {
                             app.message = Some((d.title.clone(), "Choose a PNG or JPEG no larger than 16 MB.".into()));
                         } else {
@@ -1119,7 +1123,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                         if let Some(start) = &app.services.pick_picture_async {
                             let inbox = crate::Inbox::default();
                             start(inbox.clone());
-                            d.picture_inbox = Some(inbox);
+                            d.file_inbox = Some(inbox);
                         } else if let Some(pick) = &app.services.pick_picture
                             && let Some(path) = pick()
                         {
@@ -1519,6 +1523,91 @@ fn macros(ui: &mut egui::Ui, d: &mut Dialog) {
             });
         }
     });
+}
+
+/// The Add-ins dialog (Excel's Add-ins available list): install `.xlam` add-ins, tick to enable,
+/// remove. Lists each add-in's functions and what didn't load. Reads the session live, so the list
+/// follows `addins.*` commands from agents too.
+fn addins(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog) {
+    let danger = crate::theme::Tokens::get(ui.ctx()).danger;
+    ui.label("Add-ins give every workbook their LAMBDA functions and constants. GridCraft never runs an add-in's VBA macros.");
+    ui.add_space(6.0);
+    // A file the browser picker delivered.
+    let arrived = d.file_inbox.as_ref().and_then(|inbox| inbox.lock().unwrap_or_else(std::sync::PoisonError::into_inner).pop());
+    let mut action: Option<(&str, Json)> = None;
+    if let Some((name, bytes)) = arrived {
+        d.file_inbox = None;
+        action = Some(("addins.install", json!({"name": name, "base64": gridcraft_engine::io::base64_encode(&bytes)})));
+    }
+    let items: Vec<(String, Option<String>, bool, Vec<String>, Vec<String>)> = app
+        .session
+        .addins
+        .iter()
+        .map(|a| (a.name.clone(), a.path.clone(), a.enabled, a.functions.iter().map(|f| f.name.clone()).collect(), a.warnings.clone()))
+        .collect();
+    if items.is_empty() {
+        ui.weak("No add-ins are installed.");
+    }
+    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+        for (name, path, enabled, functions, warnings) in &items {
+            ui.horizontal(|ui| {
+                let mut on = *enabled;
+                if ui.checkbox(&mut on, egui::RichText::new(name).strong()).changed() {
+                    action = Some(("addins.setEnabled", json!({"name": name, "enabled": on})));
+                }
+                if ui.small_button("Remove").clicked() {
+                    action = Some(("addins.remove", json!({"name": name})));
+                }
+            });
+            ui.indent(("addin", name), |ui| {
+                if let Some(path) = path {
+                    ui.weak(path);
+                }
+                if !functions.is_empty() {
+                    let shown: Vec<&str> = functions.iter().take(12).map(String::as_str).collect();
+                    let more = functions.len().saturating_sub(shown.len());
+                    let more = if more > 0 { format!(" and {more} more") } else { String::new() };
+                    ui.label(format!("{}{more}", shown.join(", ")));
+                }
+                for w in warnings {
+                    ui.label(egui::RichText::new(w).color(danger));
+                }
+            });
+            ui.add_space(4.0);
+        }
+    });
+    ui.separator();
+    let can_browse = app.services.pick_addin.is_some() || app.services.pick_addin_async.is_some();
+    ui.horizontal(|ui| {
+        if can_browse {
+            if ui.button("Browse…").clicked() {
+                if let Some(start) = &app.services.pick_addin_async {
+                    let inbox = crate::Inbox::default();
+                    start(inbox.clone());
+                    d.file_inbox = Some(inbox);
+                } else if let Some(pick) = &app.services.pick_addin
+                    && let Some(path) = pick()
+                {
+                    action = Some(("addins.install", json!({"path": path})));
+                }
+            }
+        } else {
+            // No picker (tests, a shell without one): type the add-in's path.
+            let mut path = d.values.get("path").and_then(Json::as_str).unwrap_or("").to_string();
+            ui.label("Add-in file:");
+            if ui.text_edit_singleline(&mut path).changed() {
+                d.values.insert("path".into(), json!(path));
+            }
+            if ui.add_enabled(!path.trim().is_empty(), egui::Button::new("Install")).clicked() {
+                action = Some(("addins.install", json!({"path": path.trim()})));
+            }
+        }
+    });
+    if let Some((id, params)) = action
+        && let Err(e) = app.session.run(id, params)
+    {
+        app.message = Some(("Add-ins".into(), e));
+    }
 }
 
 fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool) {

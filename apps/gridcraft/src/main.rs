@@ -119,6 +119,10 @@ fn load_prefs(app: &mut SheetApp) {
     {
         app.session.prefs = p;
     }
+    // Installed add-ins load now; one whose file is gone stays in the Add-ins dialog with why.
+    for problem in app.session.load_installed_addins() {
+        log::warn!("add-in {problem}");
+    }
 }
 
 fn save_prefs(app: &SheetApp) {
@@ -175,6 +179,13 @@ fn services() -> Services {
         pick_picture: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .add_filter("Pictures (PNG, JPEG)", &["png", "jpg", "jpeg"])
+                .pick_file()
+                .and_then(|p| p.to_str().map(str::to_string))
+        })),
+        pick_addin: Some(Box::new(|| {
+            rfd::FileDialog::new()
+                .add_filter("Excel Add-in", &["xlam"])
+                .add_filter("Workbooks", &["xlsx", "xlsm"])
                 .pick_file()
                 .and_then(|p| p.to_str().map(str::to_string))
         })),

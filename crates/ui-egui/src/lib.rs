@@ -175,6 +175,10 @@ pub struct Services {
     /// Browser picture picker. Each dialog owns its inbox, so canceled picks cannot
     /// insert into a subsequent dialog or open the image as a workbook.
     pub pick_picture_async: Option<Box<dyn Fn(Inbox)>>,
+    /// Native add-in picker (`.xlam`) for the Add-ins dialog.
+    pub pick_addin: Option<Box<dyn Fn() -> Option<String>>>,
+    /// Browser add-in picker; the file arrives in the Add-ins dialog's own inbox.
+    pub pick_addin_async: Option<Box<dyn Fn(Inbox)>>,
     pub open_url: Option<Box<dyn Fn(&str)>>,
     /// Publish HTML and its plain-text alternative together. `Ok` means the host owns the
     /// write (including any asynchronous fallback); an immediate error uses egui's text path.
@@ -492,6 +496,10 @@ impl SheetApp {
     }
 
     pub fn run_or_alert(&mut self, id: &str, params: Json) {
+        // Home › Add-ins (and its keytip) opens the Add-ins dialog; `run` returns the list.
+        if id == "home.addIns" {
+            return self.open_dialog("addins", json!({}));
+        }
         // A menu/shortcut opens the settings first; the Print page's button submits explicitly.
         if id == "file.print" {
             if self.services.print_native.is_some() {

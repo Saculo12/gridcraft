@@ -2243,6 +2243,9 @@ fn automate(app: &mut SheetApp, ui: &mut Ui) {
     if big_button(ui, Icon::Script, "Macros", "Macros and scripts in this workbook (Alt+F8)", false).clicked() {
         app.open_dialog("macros", json!({}));
     }
+    if big_button(ui, Icon::Script, "Add-ins", "Install and manage add-ins (.xlam) whose LAMBDA functions every workbook can use", false).clicked() {
+        app.open_dialog("addins", json!({}));
+    }
     let __k = big_button(ui, Icon::Script, "Command\nPalette", "Search and run any command", false);
     control_keytip(app, ui, &__k, "commandSearch");
     if __k.clicked() {
