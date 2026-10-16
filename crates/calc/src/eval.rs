@@ -297,6 +297,16 @@ impl<'h> Evaluator<'h> {
         {
             return Ev::R(vec![Area { sheet: si, range: d }]);
         }
+        // An enabled add-in's function or constant. Add-in names hold no cell references (the
+        // engine only loads those), so they mean the same from any cell of any workbook.
+        if n == bare
+            && let Some(def) = wb.addin_name(bare)
+        {
+            return match gridcraft_formula::parse(&def.formula) {
+                Ok(expr) => self.eval(&expr),
+                Err(_) => err(CellError::Name),
+            };
+        }
         err(CellError::Name)
     }
 
@@ -971,11 +981,12 @@ impl<'h> Evaluator<'h> {
     }
 
     /// A worksheet function given by name where a function is expected (`BYROW(A1:C3,SUM)`,
-    /// `GROUPBY(A2:A9,B2:B9,SUM)`): its name, unless a LET/LAMBDA variable or a defined name has
-    /// that name.
+    /// `GROUPBY(A2:A9,B2:B9,SUM)`): its name, unless a LET/LAMBDA variable, a defined name or an
+    /// add-in name has that name.
     fn function_by_name(&self, e: &Expr) -> Option<String> {
         let Expr::Name(n) = e else { return None };
-        if self.env.iter().any(|(k, _)| k.eq_ignore_ascii_case(n)) || self.host.workbook().name(n, self.sheet).is_some() {
+        let wb = self.host.workbook();
+        if self.env.iter().any(|(k, _)| k.eq_ignore_ascii_case(n)) || wb.name(n, self.sheet).is_some() || wb.addin_name(n).is_some() {
             return None;
         }
         let u = n.to_ascii_uppercase();

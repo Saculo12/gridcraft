@@ -423,6 +423,51 @@ fn format_cells_draws_its_labels_in_the_interface_language() {
 }
 
 #[test]
+fn addins_dialog_installs_disables_and_removes_an_addin() {
+    let mut book = gridcraft_engine::model::Workbook::new();
+    book.names.push(gridcraft_engine::model::DefinedName {
+        name: "Twice".into(),
+        scope: None,
+        formula: "LAMBDA(x,x*2)".into(),
+        comment: String::new(),
+        hidden: false,
+    });
+    let dir = std::env::temp_dir().join(format!("gridcraft-addins-ui-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("Tools.xlam");
+    std::fs::write(&file, gridcraft_engine::io::save_bytes(&book, "t.xlsx").unwrap()).unwrap();
+    let mut h = harness(blank());
+    h.state_mut().run("cell.set", json!({"cell": "A1", "input": "=Twice(21)"})).unwrap();
+    let a1 =
+        |h: &egui_kittest::Harness<'static, SheetApp>| h.state().session.active().unwrap().wb.active().unwrap().value(CellRef::parse("A1").unwrap());
+    // Home › Add-ins opens the dialog, as its keytip does.
+    h.state_mut().run_or_alert("home.addIns", json!({}));
+    h.run_steps(2);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name()), Some("addins"));
+    assert!(h.query_by_label("No add-ins are installed.").is_some());
+    // No picker in tests: the path field installs.
+    if let Some(d) = h.state_mut().dialog.as_mut() {
+        d.values.insert("path".into(), json!(file.to_str().unwrap()));
+    }
+    h.run_steps(2);
+    h.get_by_label("Install").click();
+    h.run_steps(2);
+    assert_eq!(a1(&h), Value::Number(42.0));
+    assert!(h.query_by_label("Twice").is_some(), "the dialog lists the add-in's functions");
+    // The dialog grew with the new add-in: let it settle so the click lands on the checkbox.
+    h.run_steps(6);
+    h.get_by_label("Tools").click();
+    h.run_steps(4);
+    assert!(!h.state().session.addins[0].enabled);
+    assert!(matches!(a1(&h), Value::Error(_)));
+    h.get_by_label("Remove").click();
+    h.run_steps(2);
+    assert!(h.state().session.addins.is_empty());
+    assert!(h.state().message.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn name_manager_new_and_edit_open_the_name_dialog_and_come_back() {
     // #238: New… in the Name Manager did nothing (the manager put itself back over the dialog it
     // had just opened).
@@ -628,6 +673,60 @@ fn solver_results_write_the_chosen_reports() {
     let names: Vec<String> = h.state().session.active().unwrap().wb.sheets.iter().map(|s| s.name.clone()).collect();
     assert_eq!(names, ["Answer Report 1", "Limits Report 1", "Sheet1"]);
     assert_eq!(value(&h, "B1"), Value::Number(0.0));
+}
+
+#[test]
+fn solver_options_dialog_hands_its_values_to_solver_parameters() {
+    let mut s = blank();
+    for (c, v) in [("A1", "0"), ("A2", "0"), ("B1", "=3*A1+5*A2"), ("B2", "=2*A2"), ("B3", "=3*A1+2*A2")] {
+        s.execute("cell.set", json!({"cell": c, "input": v})).unwrap();
+    }
+    let mut h = harness(s);
+    h.state_mut().open_dialog("solver", json!({}));
+    {
+        let d = h.state_mut().dialog.as_mut().unwrap();
+        d.values.insert("objective".into(), json!("B1"));
+        d.values.insert("variables".into(), json!("A1:A2"));
+        d.values.insert("constraints".into(), json!(["A1 <= 4", "B2 <= 12", "B3 <= 18"]));
+        d.values.insert("method".into(), json!("simplex"));
+    }
+    h.run_steps(2);
+    h.get_by_label("Options…").click();
+    h.run_steps(2);
+    let d = h.state().dialog.as_ref().unwrap();
+    assert_eq!(d.name(), "solverOptions");
+    assert_eq!(d.values.get("derivatives"), Some(&json!("central")), "the defaults fill the options");
+    // Every tab draws; OK hands the values back to Solver Parameters.
+    for tab in ["GRG Nonlinear", "Evolutionary", "All Methods"] {
+        h.get_by_label(tab).click();
+        h.run_steps(2);
+    }
+    {
+        let d = h.state_mut().dialog.as_mut().unwrap();
+        d.values.insert("precision".into(), json!("0.0001"));
+        d.values.insert("maxSubproblems".into(), json!("500"));
+    }
+    h.run_steps(2);
+    key(&mut h, Key::Enter, Modifiers::NONE);
+    let d = h.state().dialog.as_ref().expect("Solver Parameters comes back");
+    assert_eq!(d.name(), "solver");
+    assert_eq!(d.values.get("precision"), Some(&json!("0.0001")));
+    assert_eq!(d.values.get("objective"), Some(&json!("B1")));
+    // Solve: the options reach the solve and are saved with the model.
+    h.get_by_label("  Solve  ").click();
+    h.run_steps(2);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name().to_string()).as_deref(), Some("solverResults"));
+    assert_eq!(value(&h, "B1"), Value::Number(36.0));
+    let saved = h.state_mut().session.execute("data.solver", json!({})).unwrap();
+    assert_eq!(saved["model"]["precision"], json!(0.0001));
+    assert_eq!(saved["model"]["maxSubproblems"], json!(500.0));
+    // Solver Results › Sensitivity writes the report.
+    h.state_mut().dialog.as_mut().unwrap().values.insert("sensitivityReport".into(), json!(true));
+    h.run_steps(2);
+    key(&mut h, Key::Enter, Modifiers::NONE);
+    assert!(h.state().message.is_none(), "{:?}", h.state().message);
+    let names: Vec<String> = h.state().session.active().unwrap().wb.sheets.iter().map(|s| s.name.clone()).collect();
+    assert_eq!(names, ["Sensitivity Report 1", "Sheet1"]);
 }
 
 #[test]

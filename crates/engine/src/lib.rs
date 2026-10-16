@@ -6,6 +6,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod addins;
 pub mod catalog;
 pub mod cf;
 mod clip_html;
@@ -199,6 +200,8 @@ pub struct Prefs {
     pub user_dictionary: Vec<String>,
     /// View › Show › Formula Bar (an application option in Excel, not saved in the file).
     pub formula_bar: bool,
+    /// Installed add-ins (Add-ins dialog), loaded at startup by [`Session::load_installed_addins`].
+    pub addins: Vec<addins::AddinPref>,
 }
 
 impl Default for Prefs {
@@ -213,6 +216,7 @@ impl Default for Prefs {
             r1c1: false,
             user_dictionary: vec![],
             formula_bar: true,
+            addins: vec![],
         }
     }
 }
@@ -256,6 +260,10 @@ pub struct Session {
     /// Review › Notes › Show All Notes: every note is displayed. An application display setting
     /// (like Excel's comment indicator option), so it's not saved in the file.
     pub show_all_notes: bool,
+    /// Installed add-ins, in the order they were installed (see [`addins`]).
+    pub addins: Vec<addins::Addin>,
+    /// The enabled add-ins' names, given to every open workbook ([`Session::sync_addins`]).
+    addin_names: Arc<Vec<gridcraft_model::DefinedName>>,
 }
 
 impl Session {
@@ -285,7 +293,8 @@ impl Session {
     pub fn doc_mut(&mut self) -> Result<&mut DocState> {
         self.active_mut().ok_or(EngineError::NoDocument)
     }
-    pub fn add_document(&mut self, d: DocState) -> usize {
+    pub fn add_document(&mut self, mut d: DocState) -> usize {
+        addins::apply(&mut d, &self.addin_names);
         self.docs.push(d);
         self.active = self.docs.len() - 1;
         self.active
@@ -335,6 +344,7 @@ impl Session {
                     d.wb = wb.clone();
                     d.selection = sel.clone();
                     d.calc.rebuild(&d.wb);
+                    addins::apply(d, &self.addin_names);
                 }
                 return Err(EngineError::Internal(id.to_string(), msg));
             }

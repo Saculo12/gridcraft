@@ -591,6 +591,46 @@ fn let_lambda() {
 }
 
 #[test]
+fn addin_names() {
+    let name = |name: &str, formula: &str| gridcraft_model::DefinedName {
+        name: name.into(),
+        scope: None,
+        formula: formula.into(),
+        comment: String::new(),
+        hidden: false,
+    };
+    let mut t = T::new();
+    t.wb.addin_names = std::sync::Arc::new(vec![
+        name("Rate", "0.2"),
+        name("AddTax", "LAMBDA(x,x*(1+Rate))"),
+        name("Twice", "LAMBDA(x,x*2)"),
+        name("Forever", "Forever+1"),
+    ]);
+    t.set("A1", "10");
+    // Called like a function, read as a constant, used by another add-in function.
+    t.set("B1", "=AddTax(A1)");
+    assert_eq!(t.num("B1"), 12.0);
+    t.set("B2", "=Rate*100");
+    assert_eq!(t.num("B2"), 20.0);
+    // Given by name where a function is expected.
+    t.set("B3", "=SUM(MAP({1,2,3},Twice))");
+    assert_eq!(t.num("B3"), 12.0);
+    // The workbook's own name of the same name wins.
+    t.wb.names.push(name("Twice", "LAMBDA(x,x*3)"));
+    t.set("B4", "=Twice(5)");
+    assert_eq!(t.num("B4"), 15.0);
+    // A sheet-qualified name is never an add-in's, and a self-reference stops at the depth limit.
+    t.set("B5", "=Sheet1!Rate");
+    assert_eq!(t.get("B5"), Value::Error(CellError::Name));
+    t.set("B6", "=Forever");
+    assert_eq!(t.get("B6"), Value::Error(CellError::Calc));
+    // Unknown names stay #NAME? once the add-in is gone.
+    t.wb.addin_names = std::sync::Arc::default();
+    t.set("B7", "=AddTax(1)");
+    assert_eq!(t.get("B7"), Value::Error(CellError::Name));
+}
+
+#[test]
 fn functions_given_by_name() {
     let mut t = T::new();
     for (i, (k, v)) in [("a", 1), ("b", -2), ("a", 3)].iter().enumerate() {

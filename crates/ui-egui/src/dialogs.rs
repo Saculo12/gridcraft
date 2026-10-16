@@ -36,7 +36,9 @@ pub struct Dialog {
     pub result: Option<Json>,
     /// "Show password" is ticked: password fields show their text.
     pub show_password: bool,
-    picture_inbox: Option<crate::Inbox>,
+    /// The browser file pick this dialog started (Insert Picture, Add-ins): it dies with the
+    /// dialog, so a late or cancelled pick never lands anywhere else.
+    file_inbox: Option<crate::Inbox>,
     picture_target: Option<(u64, usize)>,
     /// The dialog this one was opened from (Name Manager › New…): it comes back when this closes.
     back: Option<Box<Dialog>>,
@@ -70,7 +72,7 @@ impl Dialog {
             list_index: 0,
             result: None,
             show_password: false,
-            picture_inbox: None,
+            file_inbox: None,
             picture_target: None,
             back: None,
         }
@@ -88,7 +90,7 @@ impl Dialog {
             list_index: 0,
             result: None,
             show_password: false,
-            picture_inbox: None,
+            file_inbox: None,
             picture_target: None,
             back: None,
         }
@@ -500,6 +502,20 @@ impl Dialog {
                 d
             }
             "solverResults" => Dialog::custom("solverResults", "Solver Results", params.clone()),
+            "solverOptions" => {
+                // The options as Solver Parameters holds them, over the defaults.
+                let mut values = gridcraft_engine::cmd::solver::option_defaults();
+                if let (Some(v), Some(given)) = (values.as_object_mut(), params.as_object()) {
+                    for (k, x) in given {
+                        if v.contains_key(k) {
+                            v.insert(k.clone(), x.clone());
+                        }
+                    }
+                }
+                let mut d = Dialog::custom("solverOptions", "Options", values);
+                d.tab = "All Methods".into();
+                d
+            }
             "subtotal" => Dialog::form(
                 "subtotal",
                 "Subtotal",
@@ -720,6 +736,7 @@ impl Dialog {
                 )
             }
             "journal" => Dialog::custom("journal", "Action Journal", json!({})),
+            "addins" => Dialog::custom("addins", "Add-ins", json!({"path": ""})),
             "macros" => {
                 let mut d = Dialog::custom("macros", "Macros", json!({}));
                 d.result = app.session.run("view.macros", json!({})).ok();
@@ -1029,10 +1046,11 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
     let width = match d.name.as_str() {
         "formatCells" => 560.0,
         "about" => 660.0,
-        "insertFunction" | "commandSearch" | "nameManager" | "manageRules" | "journal" | "agents" | "macros" => 520.0,
+        "insertFunction" | "commandSearch" | "nameManager" | "manageRules" | "journal" | "agents" | "macros" | "addins" => 520.0,
         "recommendedCharts" => 600.0,
         "analysisToolPak" => 420.0,
         "solver" => 460.0,
+        "solverOptions" => 400.0,
         _ => 380.0,
     };
     let window = egui::Window::new(app.ui.language.tr(&d.title))
@@ -1059,7 +1077,8 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "commandSearch" => command_search(app, ui, &mut d, &mut confirm),
                 "goalSeek" => goal_seek(app, ui, &mut d, &mut confirm),
                 "analysisToolPak" => analysis_toolpak(app, ui, &mut d, &mut confirm, &mut open),
-                "solver" => solver(ui, &mut d, &mut confirm, &mut open),
+                "solver" => solver(app, ui, &mut d, &mut confirm, &mut open),
+                "solverOptions" => solver_options(ui, &mut d, &mut open),
                 "solverResults" => solver_results(app, ui, &mut d, &mut open),
                 "spelling" => spelling(app, ui, &mut d, &mut open),
                 "agents" => {
@@ -1078,6 +1097,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                     });
                 }
                 "macros" => macros(ui, &mut d),
+                "addins" => addins(app, ui, &mut d),
                 "statistics" | "accessibility" | "errorChecking" | "evaluateFormula" | "comments" => {
                     let r = if d.name == "comments" {
                         app.session.active().and_then(|doc| doc.wb.active().map(|s| json!(s.comments.iter().map(|(c, m)| json!({"cell": c.a1(), "author": m.author, "text": m.text})).collect::<Vec<_>>())))
@@ -1091,11 +1111,11 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "insertPicture" => {
                     // A private inbox dies with this dialog; late browser results
                     // cannot affect a later picture choice or another workbook.
-                    let arrived = d.picture_inbox.as_ref().and_then(|inbox| {
+                    let arrived = d.file_inbox.as_ref().and_then(|inbox| {
                         inbox.lock().unwrap_or_else(std::sync::PoisonError::into_inner).pop()
                     });
                     if let Some((name, bytes)) = arrived {
-                        d.picture_inbox = None;
+                        d.file_inbox = None;
                         if bytes.len() > 16 * 1024 * 1024 {
                             app.message = Some((d.title.clone(), "Choose a PNG or JPEG no larger than 16 MB.".into()));
                         } else {
@@ -1119,7 +1139,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                         if let Some(start) = &app.services.pick_picture_async {
                             let inbox = crate::Inbox::default();
                             start(inbox.clone());
-                            d.picture_inbox = Some(inbox);
+                            d.file_inbox = Some(inbox);
                         } else if let Some(pick) = &app.services.pick_picture
                             && let Some(path) = pick()
                         {
@@ -1519,6 +1539,91 @@ fn macros(ui: &mut egui::Ui, d: &mut Dialog) {
             });
         }
     });
+}
+
+/// The Add-ins dialog (Excel's Add-ins available list): install `.xlam` add-ins, tick to enable,
+/// remove. Lists each add-in's functions and what didn't load. Reads the session live, so the list
+/// follows `addins.*` commands from agents too.
+fn addins(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog) {
+    let danger = crate::theme::Tokens::get(ui.ctx()).danger;
+    ui.label("Add-ins give every workbook their LAMBDA functions and constants. GridCraft never runs an add-in's VBA macros.");
+    ui.add_space(6.0);
+    // A file the browser picker delivered.
+    let arrived = d.file_inbox.as_ref().and_then(|inbox| inbox.lock().unwrap_or_else(std::sync::PoisonError::into_inner).pop());
+    let mut action: Option<(&str, Json)> = None;
+    if let Some((name, bytes)) = arrived {
+        d.file_inbox = None;
+        action = Some(("addins.install", json!({"name": name, "base64": gridcraft_engine::io::base64_encode(&bytes)})));
+    }
+    let items: Vec<(String, Option<String>, bool, Vec<String>, Vec<String>)> = app
+        .session
+        .addins
+        .iter()
+        .map(|a| (a.name.clone(), a.path.clone(), a.enabled, a.functions.iter().map(|f| f.name.clone()).collect(), a.warnings.clone()))
+        .collect();
+    if items.is_empty() {
+        ui.weak("No add-ins are installed.");
+    }
+    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+        for (name, path, enabled, functions, warnings) in &items {
+            ui.horizontal(|ui| {
+                let mut on = *enabled;
+                if ui.checkbox(&mut on, egui::RichText::new(name).strong()).changed() {
+                    action = Some(("addins.setEnabled", json!({"name": name, "enabled": on})));
+                }
+                if ui.small_button("Remove").clicked() {
+                    action = Some(("addins.remove", json!({"name": name})));
+                }
+            });
+            ui.indent(("addin", name), |ui| {
+                if let Some(path) = path {
+                    ui.weak(path);
+                }
+                if !functions.is_empty() {
+                    let shown: Vec<&str> = functions.iter().take(12).map(String::as_str).collect();
+                    let more = functions.len().saturating_sub(shown.len());
+                    let more = if more > 0 { format!(" and {more} more") } else { String::new() };
+                    ui.label(format!("{}{more}", shown.join(", ")));
+                }
+                for w in warnings {
+                    ui.label(egui::RichText::new(w).color(danger));
+                }
+            });
+            ui.add_space(4.0);
+        }
+    });
+    ui.separator();
+    let can_browse = app.services.pick_addin.is_some() || app.services.pick_addin_async.is_some();
+    ui.horizontal(|ui| {
+        if can_browse {
+            if ui.button("Browse…").clicked() {
+                if let Some(start) = &app.services.pick_addin_async {
+                    let inbox = crate::Inbox::default();
+                    start(inbox.clone());
+                    d.file_inbox = Some(inbox);
+                } else if let Some(pick) = &app.services.pick_addin
+                    && let Some(path) = pick()
+                {
+                    action = Some(("addins.install", json!({"path": path})));
+                }
+            }
+        } else {
+            // No picker (tests, a shell without one): type the add-in's path.
+            let mut path = d.values.get("path").and_then(Json::as_str).unwrap_or("").to_string();
+            ui.label("Add-in file:");
+            if ui.text_edit_singleline(&mut path).changed() {
+                d.values.insert("path".into(), json!(path));
+            }
+            if ui.add_enabled(!path.trim().is_empty(), egui::Button::new("Install")).clicked() {
+                action = Some(("addins.install", json!({"path": path.trim()})));
+            }
+        }
+    });
+    if let Some((id, params)) = action
+        && let Err(e) = app.session.run(id, params)
+    {
+        app.message = Some(("Add-ins".into(), e));
+    }
 }
 
 fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool) {
@@ -2446,8 +2551,8 @@ fn analysis_toolpak(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confi
 }
 
 /// Data › Solver: the Solver Parameters form. Solve runs `data.solver` through the dialog's
-/// command; the result opens Solver Results.
-fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+/// command; the result opens Solver Results. Options… opens Solver Options over it.
+fn solver(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
     let text = |d: &Dialog, k: &str| d.values.get(k).map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).unwrap_or_default();
     let edit = |ui: &mut egui::Ui, d: &mut Dialog, k: &str, width: f32| {
         let mut t = text(d, k);
@@ -2539,6 +2644,9 @@ fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool
                 }
             }
         });
+        if ui.button("Options…").clicked() {
+            app.open_dialog("solverOptions", Json::Object(d.values.clone()));
+        }
     });
     ui.label(
         egui::RichText::new(match method.as_str() {
@@ -2561,6 +2669,104 @@ fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool
     });
 }
 
+/// Solver Options over Solver Parameters: All Methods, GRG Nonlinear and Evolutionary tabs. OK
+/// hands the values back to Solver Parameters, which solves with them and saves them with the
+/// model. GridCraft keeps no clock, so its limits are evaluations and generations.
+fn solver_options(ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool) {
+    ui.horizontal(|ui| {
+        for tab in ["All Methods", "GRG Nonlinear", "Evolutionary"] {
+            if ui.selectable_label(d.tab == tab, tab).clicked() {
+                d.tab = tab.to_string();
+            }
+        }
+    });
+    ui.separator();
+    let text = |d: &Dialog, k: &str| match d.values.get(k) {
+        Some(Json::String(t)) => t.clone(),
+        Some(Json::Null) | None => String::new(),
+        Some(Json::Number(n)) => n.as_f64().map(gridcraft_engine::core::number_to_text).unwrap_or_default(),
+        Some(v) => v.to_string(),
+    };
+    let field = |ui: &mut egui::Ui, d: &mut Dialog, label: &str, k: &str| {
+        ui.label(label);
+        let mut t = text(d, k);
+        if ui.add(egui::TextEdit::singleline(&mut t).desired_width(110.0)).changed() {
+            d.values.insert(k.into(), json!(t));
+        }
+        ui.end_row();
+    };
+    let check = |ui: &mut egui::Ui, d: &mut Dialog, label: &str, k: &str| {
+        let mut on = d.values.get(k).and_then(Json::as_bool).unwrap_or(false);
+        if ui.checkbox(&mut on, label).changed() {
+            d.values.insert(k.into(), json!(on));
+        }
+    };
+    egui::Grid::new(("solverOptions", d.tab.clone())).num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| match d.tab.as_str() {
+        "GRG Nonlinear" => {
+            field(ui, d, "Convergence:", "convergence");
+            ui.label("Derivatives:");
+            let central = d.values.get("derivatives").and_then(Json::as_str) != Some("forward");
+            ui.horizontal(|ui| {
+                if ui.radio(!central, "Forward").clicked() {
+                    d.values.insert("derivatives".into(), json!("forward"));
+                }
+                if ui.radio(central, "Central").clicked() {
+                    d.values.insert("derivatives".into(), json!("central"));
+                }
+            });
+            ui.end_row();
+            check(ui, d, "Use Multistart", "multistart");
+            ui.end_row();
+            field(ui, d, "Population Size:", "populationSize");
+            field(ui, d, "Random Seed:", "randomSeed");
+            check(ui, d, "Require Bounds on Variables", "requireBounds");
+            ui.end_row();
+        }
+        "Evolutionary" => {
+            field(ui, d, "Convergence:", "convergence");
+            field(ui, d, "Mutation Rate:", "mutationRate");
+            field(ui, d, "Population Size:", "populationSize");
+            field(ui, d, "Random Seed:", "randomSeed");
+            field(ui, d, "Max Generations without Improvement:", "generationsWithoutImprovement");
+            check(ui, d, "Require Bounds on Variables", "requireBounds");
+            ui.end_row();
+        }
+        _ => {
+            field(ui, d, "Constraint Precision:", "precision");
+            check(ui, d, "Use Automatic Scaling", "scaling");
+            ui.end_row();
+            check(ui, d, "Ignore Integer Constraints", "ignoreIntegers");
+            ui.end_row();
+            field(ui, d, "Integer Optimality (%):", "integerOptimality");
+            field(ui, d, "Max Evaluations:", "maxEvaluations");
+            field(ui, d, "Max Subproblems:", "maxSubproblems");
+            field(ui, d, "Max Feasible Solutions:", "maxFeasibleSolutions");
+        }
+    });
+    ui.label(
+        egui::RichText::new("Shared by both methods: Convergence, Population Size, Random Seed and Require Bounds. A blank limit is no limit.")
+            .small(),
+    );
+    let mut confirm = false;
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if ui.button("Reset All").clicked()
+            && let Json::Object(defaults) = gridcraft_engine::cmd::solver::option_defaults()
+        {
+            d.values = defaults;
+        }
+    });
+    ok_cancel(ui, &mut confirm, open);
+    if confirm {
+        if let Some(back) = d.back.as_mut() {
+            for (k, v) in &d.values {
+                back.values.insert(k.clone(), v.clone());
+            }
+        }
+        *open = false;
+    }
+}
+
 /// Solver Results: the outcome, and keeping or restoring the variable cells.
 fn solver_results(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool) {
     let message = d.values.get("message").and_then(Json::as_str).unwrap_or("").to_string();
@@ -2581,7 +2787,7 @@ fn solver_results(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &
     if solved {
         ui.add_space(4.0);
         ui.label("Reports:");
-        for (key, label) in [("answerReport", "Answer"), ("limitsReport", "Limits")] {
+        for (key, label) in [("answerReport", "Answer"), ("sensitivityReport", "Sensitivity"), ("limitsReport", "Limits")] {
             let mut on = d.values.get(key).and_then(Json::as_bool).unwrap_or(false);
             if ui.checkbox(&mut on, label).changed() {
                 d.values.insert(key.into(), json!(on));
@@ -2595,7 +2801,7 @@ fn solver_results(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &
         if changed && restore {
             app.run_or_alert("edit.undo", json!({}));
         }
-        let reports: Vec<&str> = [("answerReport", "answer"), ("limitsReport", "limits")]
+        let reports: Vec<&str> = [("answerReport", "answer"), ("sensitivityReport", "sensitivity"), ("limitsReport", "limits")]
             .into_iter()
             .filter(|(key, _)| d.values.get(*key).and_then(Json::as_bool) == Some(true))
             .map(|(_, kind)| kind)

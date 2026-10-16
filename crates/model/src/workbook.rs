@@ -120,6 +120,11 @@ pub struct Workbook {
     /// `preserved` are relative to. Saving into another folder rewrites them from there. Not in JSON.
     #[serde(skip)]
     pub source_dir: Option<std::path::PathBuf>,
+    /// Functions and constants from the session's enabled add-ins (the workbook-scope names of
+    /// loaded `.xlam` files), looked up after the workbook's own names miss. Set by the engine
+    /// and shared by every open workbook; never saved. Not in JSON.
+    #[serde(skip)]
+    pub addin_names: Arc<Vec<DefinedName>>,
 }
 
 impl Default for Workbook {
@@ -148,6 +153,7 @@ impl Workbook {
             csv_delimiter: None,
             preserved: None,
             source_dir: None,
+            addin_names: Arc::default(),
         }
     }
     pub fn sheet(&self, i: usize) -> Option<&Sheet> {
@@ -199,6 +205,11 @@ impl Workbook {
             .find(|n| n.scope == Some(sheet) && n.name.eq_ignore_ascii_case(name))
             .or_else(|| self.names.iter().find(|n| n.scope.is_none() && n.name.eq_ignore_ascii_case(name)))
     }
+    /// An add-in function or constant by name. Callers try [`Workbook::name`] first: the
+    /// workbook's own names win over an add-in's.
+    pub fn addin_name(&self, name: &str) -> Option<&DefinedName> {
+        self.addin_names.iter().find(|n| n.name.eq_ignore_ascii_case(name))
+    }
     /// Spells calls of LAMBDA names the way the names are defined (`Double(4)`, where the
     /// parser gives `DOUBLE(4)`: it upper-cases function names, as built-in ones are shown).
     pub fn name_call_case(&self, e: Expr) -> Expr {
@@ -241,10 +252,11 @@ impl Workbook {
             }
         }
     }
-    /// Names of the defined names holding a LAMBDA (callable like functions).
+    /// Names of the defined names holding a LAMBDA (callable like functions), the workbook's own
+    /// and then its add-ins'.
     fn lambda_names(&self) -> Vec<String> {
         let is_lambda = |f: &str| f.trim_start_matches('=').trim_start().get(..7).is_some_and(|p| p.eq_ignore_ascii_case("LAMBDA("));
-        self.names.iter().filter(|n| is_lambda(&n.formula)).map(|n| n.name.clone()).collect()
+        self.names.iter().chain(self.addin_names.iter()).filter(|n| is_lambda(&n.formula)).map(|n| n.name.clone()).collect()
     }
     /// Table by name across sheets: (sheet index, table index).
     pub fn table(&self, name: &str) -> Option<(usize, usize)> {
