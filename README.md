@@ -122,6 +122,16 @@ cd apps/gridcraft-web && trunk serve --release     # http://127.0.0.1:8771  (?sa
 You need [trunk](https://trunkrs.dev) and the `wasm32-unknown-unknown` target. Open uses the
 browser's file picker (dropping files works too) and Save downloads the workbook.
 
+### iPad (early)
+
+```sh
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim && brew install xcodegen
+packaging/ios/xcode.sh && open packaging/ios/GridCraft.xcodeproj   # then Run on an iPad Simulator
+```
+
+On a Mac with Xcode. See [`packaging/ios/README.md`](packaging/ios/README.md) for testing on a
+device, where files live, and what isn't ported yet.
+
 ### Ribbon access keys
 
 Press and release **left Alt** on Windows/Linux/BSD, or press **F10** on any platform,
@@ -188,7 +198,7 @@ egui frontend is a separate crate, so the UI can be swapped without touching the
 | L3 | `chart` (toolkit-free chart layout and rendering) |
 | L5 | `engine` (session, commands, history, clipboard, fill, sort, filter, file I/O) |
 | L6 | `ui-egui` (Excel-style UI, control channel) · `mcp` (MCP server) |
-| L7 | `apps/gridcraft`, `apps/gridcraft-cli`, `apps/gridcraft-web` |
+| L7 | `apps/gridcraft`, `apps/gridcraft-cli`, `apps/gridcraft-web`, `apps/gridcraft-ios` |
 
 - **Contributor and agent rules** (clean-room, asset policy, never-crash, quality gates): [`AGENTS.md`](AGENTS.md)
 - **Bundled assets:** each one is listed with its licence in [`ATTRIBUTION.md`](ATTRIBUTION.md)

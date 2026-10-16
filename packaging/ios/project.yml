@@ -1,0 +1,52 @@
+# XcodeGen spec for GridCraft on iPadOS. Generate the Xcode project with ./xcode.sh (it also makes
+# the app icon catalog), then open GridCraft.xcodeproj. Both are generated: edit this file.
+#
+# The app target has no Swift or Objective-C sources. Its one build script (build-rust.sh) builds
+# apps/gridcraft-ios with Cargo and copies the executable into GridCraft.app; Xcode then copies
+# the resources and signs the bundle as usual.
+name: GridCraft
+options:
+  bundleIdPrefix: ai.storyteller
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    MARKETING_VERSION: "0.7.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  GridCraft:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: build/Assets.xcassets
+        buildPhase: resources
+      - path: Info.plist
+        buildPhase: none
+    settings:
+      base:
+        PRODUCT_NAME: GridCraft
+        PRODUCT_BUNDLE_IDENTIFIER: ai.storyteller.gridcraft
+        INFOPLIST_FILE: Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        # iPad only for now.
+        TARGETED_DEVICE_FAMILY: "2"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Cargo writes to target-ios at the repository root, outside the script sandbox.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        CODE_SIGN_STYLE: Automatic
+        # Pick your team in Xcode (Signing & Capabilities) to run on an iPad.
+        DEVELOPMENT_TEAM: ""
+    postCompileScripts:
+      - name: Build GridCraft (Rust)
+        script: '"$SRCROOT/build-rust.sh"'
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
+    scheme:
+      commandLineArguments:
+        "--sample sales": true
+        "--control 7979": false

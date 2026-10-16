@@ -1,5 +1,5 @@
 # The AGENTS.md quality gate (`cargo xtask ci`: fmt, clippy -D warnings, tests, assets, layers,
-# wasm, parity --check) on every pull request and every push to main, so a merge burst can't land
+# wasm, ios, parity --check) on every pull request and every push to main, so a merge burst can't land
 # a red tree that only the next agent session discovers.
 name: CI
 
@@ -34,10 +34,10 @@ jobs:
             pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev \
             libxi-dev libgtk-3-dev libfontconfig1-dev libfreetype-dev mesa-vulkan-drivers
 
-      - name: Install Rust (stable + clippy, rustfmt, wasm32)
+      - name: Install Rust (stable + clippy, rustfmt, wasm32, iOS)
         run: |
           rustup toolchain install stable --profile minimal --component clippy,rustfmt \
-            --target wasm32-unknown-unknown
+            --target wasm32-unknown-unknown --target aarch64-apple-ios --target aarch64-apple-ios-sim
           rustup default stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2

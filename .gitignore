@@ -8,3 +8,5 @@ plan/
 /.claude/
 /target-*/
 /craft-fonts/
+/packaging/ios/build/
+/packaging/ios/GridCraft.xcodeproj/

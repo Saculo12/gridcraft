@@ -21,11 +21,14 @@ const USAGE: &str = "\
 usage: cargo xtask <command>
 
 commands:
-  ci              fmt --check, clippy -D warnings, test, assets, layers, wasm, parity --check
-                  (stops at the first failure; the parity check runs only if docs/parity-checklist.md exists)
+  ci              fmt --check, clippy -D warnings, test, assets, layers, wasm, ios, parity --check
+                  (stops at the first failure; the parity check runs only if docs/parity-checklist.md exists,
+                  the ios check only where the iOS Rust targets are installed)
   assets          check that every icon/image/font/sample file is attributed in ATTRIBUTION.md
   layers          enforce the crate dependency layering (AGENTS.md \"Layering\")
   wasm            cargo check --target wasm32-unknown-unknown for the L0-L5 crates (+ gridcraft-web)
+  ios             cargo clippy -D warnings for gridcraft-ios on the iPad and Simulator targets
+                  (runs on any host: rustup target add aarch64-apple-ios aarch64-apple-ios-sim)
   parity [--check] [--out PATH]
                   write docs/parity-checklist.md from gridcraft_engine::catalog (implemented vs missing ids)
   keytips [--check]
@@ -44,6 +47,7 @@ fn main() -> ExitCode {
         Some("assets") => assets::run(&root()),
         Some("layers") => cmd_layers(),
         Some("wasm") => cmd_wasm(),
+        Some("ios") => cmd_ios(false),
         Some("ci") => cmd_ci(),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
         Some("parity") => parity::run(&root(), &rest),
@@ -157,6 +161,37 @@ fn cmd_wasm() -> Result<(), String> {
     r
 }
 
+/// The iPad app's Rust targets: devices, and Simulators on Apple silicon.
+const IOS_TARGETS: [&str; 2] = ["aarch64-apple-ios", "aarch64-apple-ios-sim"];
+
+/// Lints `gridcraft-ios` for iPadOS. Checking needs no Apple SDK (nothing is linked), so this
+/// runs on Linux too. `skip_missing` (the `ci` step) skips it when rustup lacks the targets.
+fn cmd_ios(skip_missing: bool) -> Result<(), String> {
+    if skip_missing {
+        let installed = Command::new("rustup")
+            .args(["target", "list", "--installed"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default();
+        let missing: Vec<&str> = IOS_TARGETS.iter().copied().filter(|t| !installed.lines().any(|l| l.trim() == *t)).collect();
+        if !missing.is_empty() {
+            println!("ios: skipped, Rust targets not installed (rustup target add {})", missing.join(" "));
+            return Ok(());
+        }
+    }
+    let mut c = cargo();
+    c.args(["clippy", "-p", "gridcraft-ios"]);
+    for t in IOS_TARGETS {
+        c.args(["--target", t]);
+    }
+    c.args(["--", "-D", "warnings"]);
+    let r = run(c, &format!("cargo clippy -p gridcraft-ios --target {} -- -D warnings", IOS_TARGETS.join(" --target ")));
+    if r.is_err() {
+        println!("(if a target is missing: rustup target add {})", IOS_TARGETS.join(" "));
+    }
+    r
+}
+
 fn cmd_ci() -> Result<(), String> {
     type Step = (&'static str, Box<dyn Fn() -> Result<(), String>>);
     let steps: Vec<Step> = vec![
@@ -187,6 +222,7 @@ fn cmd_ci() -> Result<(), String> {
         ("assets", Box::new(|| assets::run(&root()))),
         ("layers", Box::new(cmd_layers)),
         ("wasm", Box::new(cmd_wasm)),
+        ("ios", Box::new(|| cmd_ios(true))),
         (
             "parity",
             Box::new(|| {

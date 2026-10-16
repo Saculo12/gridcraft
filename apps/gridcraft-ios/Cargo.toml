@@ -1,0 +1,27 @@
+[package]
+name = "gridcraft-ios"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "GridCraft for iPadOS (eframe on winit's UIKit backend, wgpu on Metal)"
+
+[lints]
+workspace = true
+
+# A plain executable, not a static library: winit starts UIKit from `main`, so the app needs no
+# Objective-C/Swift entry point and no `#[no_mangle]` export (both would need `unsafe`, which the
+# workspace forbids). Xcode copies this binary into the app bundle (`packaging/ios`).
+[[bin]]
+name = "gridcraft-ios"
+path = "src/main.rs"
+
+[dependencies]
+gridcraft-engine = { workspace = true }
+gridcraft-ui-egui = { workspace = true }
+egui = { workspace = true }
+log = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+eframe = { workspace = true, features = ["default_fonts", "wgpu"] }

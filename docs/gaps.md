@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (rows auto-fit oversized fonts on open and whole-row/column formatting) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-16 · **Change:** minor (first iPadOS build) · **Target:** Microsoft Excel (Microsoft 365)
 
 Every known shortfall against Excel, one entry each, ranked by user impact (what blocks someone
 using GridCraft for real work first). This is the work list: pick from the top, check the open
@@ -158,7 +158,13 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
   already strong. **Estimate:** 30–50 h; model choice needs the owner.
 
 ### 23. Mobile (platform)
-- No iOS, iPadOS or Android layout. **Estimate:** 30–60 h.
+- iPadOS: an early native build runs from Xcode (`apps/gridcraft-ios`, `packaging/ios`): the
+  full UI with taps, the on-screen keyboard and the Documents folder shared with the Files app.
+  Remaining: a document picker and Open in, the system clipboard, opening links (these three
+  need UIKit calls, so a decision on `unsafe` or audited safe crates), touch-first interaction
+  (one-finger grid panning, pinch zoom, selection handles, long-press menus, larger ribbon
+  targets), lifecycle autosave, an opaque App Store icon and release signing.
+- No iPhone or Android layout. **Estimate:** 55–90 h (iPad remainder 45–75, iPhone 10–15 on top).
 
 ### 24. Fonts and look (U)
 - Font weights beyond regular/bold (#168), system font list (#4), Calibri metrics (#29), macOS
@@ -168,6 +174,7 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-16 | minor | §23: first iPadOS build (Xcode project, Rust app shell); remainder re-estimated |
 | 2026-10-12 | minor | rows auto-fit oversized fonts on open and whole-row/column formatting (#833) |
 | 2026-10-12 | minor | Page Layout view: dragging margins on the rulers (#792) removed from the §14 remainder |
 | 2026-10-12 | minor | §13: Forecast Sheet Forecast Start (hindcast) landed (#785) |

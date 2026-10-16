@@ -1600,6 +1600,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gridcraft-ios"
+version = "0.7.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "gridcraft-engine",
+ "gridcraft-ui-egui",
+ "log",
+ "serde_json",
+]
+
+[[package]]
 name = "gridcraft-mcp"
 version = "0.7.0"
 dependencies = [
