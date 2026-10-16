@@ -676,6 +676,60 @@ fn solver_results_write_the_chosen_reports() {
 }
 
 #[test]
+fn solver_options_dialog_hands_its_values_to_solver_parameters() {
+    let mut s = blank();
+    for (c, v) in [("A1", "0"), ("A2", "0"), ("B1", "=3*A1+5*A2"), ("B2", "=2*A2"), ("B3", "=3*A1+2*A2")] {
+        s.execute("cell.set", json!({"cell": c, "input": v})).unwrap();
+    }
+    let mut h = harness(s);
+    h.state_mut().open_dialog("solver", json!({}));
+    {
+        let d = h.state_mut().dialog.as_mut().unwrap();
+        d.values.insert("objective".into(), json!("B1"));
+        d.values.insert("variables".into(), json!("A1:A2"));
+        d.values.insert("constraints".into(), json!(["A1 <= 4", "B2 <= 12", "B3 <= 18"]));
+        d.values.insert("method".into(), json!("simplex"));
+    }
+    h.run_steps(2);
+    h.get_by_label("Options…").click();
+    h.run_steps(2);
+    let d = h.state().dialog.as_ref().unwrap();
+    assert_eq!(d.name(), "solverOptions");
+    assert_eq!(d.values.get("derivatives"), Some(&json!("central")), "the defaults fill the options");
+    // Every tab draws; OK hands the values back to Solver Parameters.
+    for tab in ["GRG Nonlinear", "Evolutionary", "All Methods"] {
+        h.get_by_label(tab).click();
+        h.run_steps(2);
+    }
+    {
+        let d = h.state_mut().dialog.as_mut().unwrap();
+        d.values.insert("precision".into(), json!("0.0001"));
+        d.values.insert("maxSubproblems".into(), json!("500"));
+    }
+    h.run_steps(2);
+    key(&mut h, Key::Enter, Modifiers::NONE);
+    let d = h.state().dialog.as_ref().expect("Solver Parameters comes back");
+    assert_eq!(d.name(), "solver");
+    assert_eq!(d.values.get("precision"), Some(&json!("0.0001")));
+    assert_eq!(d.values.get("objective"), Some(&json!("B1")));
+    // Solve: the options reach the solve and are saved with the model.
+    h.get_by_label("  Solve  ").click();
+    h.run_steps(2);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name().to_string()).as_deref(), Some("solverResults"));
+    assert_eq!(value(&h, "B1"), Value::Number(36.0));
+    let saved = h.state_mut().session.execute("data.solver", json!({})).unwrap();
+    assert_eq!(saved["model"]["precision"], json!(0.0001));
+    assert_eq!(saved["model"]["maxSubproblems"], json!(500.0));
+    // Solver Results › Sensitivity writes the report.
+    h.state_mut().dialog.as_mut().unwrap().values.insert("sensitivityReport".into(), json!(true));
+    h.run_steps(2);
+    key(&mut h, Key::Enter, Modifiers::NONE);
+    assert!(h.state().message.is_none(), "{:?}", h.state().message);
+    let names: Vec<String> = h.state().session.active().unwrap().wb.sheets.iter().map(|s| s.name.clone()).collect();
+    assert_eq!(names, ["Sensitivity Report 1", "Sheet1"]);
+}
+
+#[test]
 fn about_renders_every_tab() {
     let mut h = harness(blank());
     for tab in ["About", "Contributors", "Models"] {

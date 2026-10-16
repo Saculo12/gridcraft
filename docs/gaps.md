@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-15 · **Change:** minor (`.xlam` add-ins load their LAMBDA functions; #21 narrowed) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-16 · **Change:** minor (Solver Options dialog and Sensitivity report; #13 narrowed) · **Target:** Microsoft Excel (Microsoft 365)
 
 Every known shortfall against Excel, one entry each, ranked by user impact (what blocks someone
 using GridCraft for real work first). This is the work list: pick from the top, check the open
@@ -109,9 +109,11 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 - `data.solver`, `data.analysisToolPak` missing. Forecast Sheet (`data.forecastSheet`) and the
   FORECAST.ETS family are in, including Forecast Start (hindcast, #785). **Estimate:** 15–25 h.
 - Solver (`data.solver`, #327) has Simplex LP with integer/binary branch and bound, a local
-  nonlinear method (augmented Lagrangian, not GRG), the Evolutionary method, and Answer and
-  Limits reports; AllDifferent constraints, the Solver Options dialog, the Sensitivity and
-  Population reports and Load/Save Model remain. The Analysis ToolPak
+  nonlinear method (augmented Lagrangian, not GRG) with Multistart, the Evolutionary method,
+  the Solver Options dialog (precision, scaling, ignore integers, branch-and-bound limits,
+  convergence, derivatives, multistart, evolutionary settings; saved with the model), and
+  Answer, Sensitivity and Limits reports; AllDifferent constraints, Show Iteration Results, time
+  limits (GridCraft counts evaluations), the Population report and Load/Save Model remain. The Analysis ToolPak
   (`data.analysisToolPak`) has 13 of 19 tools. Forecast Sheet (`data.forecastSheet`) and the
   FORECAST.ETS family are in; the sheet has no Forecast Start (hindcast) option yet. **Estimate:** 12–20 h.
 
@@ -172,6 +174,7 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-16 | minor | §13: Solver Options dialog and Sensitivity report landed; what remains listed |
 | 2026-10-15 | minor | #21: `.xlam` add-ins load their LAMBDA functions and constants; what remains listed |
 | 2026-10-12 | minor | rows auto-fit oversized fonts on open and whole-row/column formatting (#833) |
 | 2026-10-12 | minor | Page Layout view: dragging margins on the rulers (#792) removed from the §14 remainder |

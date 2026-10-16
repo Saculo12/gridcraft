@@ -502,6 +502,20 @@ impl Dialog {
                 d
             }
             "solverResults" => Dialog::custom("solverResults", "Solver Results", params.clone()),
+            "solverOptions" => {
+                // The options as Solver Parameters holds them, over the defaults.
+                let mut values = gridcraft_engine::cmd::solver::option_defaults();
+                if let (Some(v), Some(given)) = (values.as_object_mut(), params.as_object()) {
+                    for (k, x) in given {
+                        if v.contains_key(k) {
+                            v.insert(k.clone(), x.clone());
+                        }
+                    }
+                }
+                let mut d = Dialog::custom("solverOptions", "Options", values);
+                d.tab = "All Methods".into();
+                d
+            }
             "subtotal" => Dialog::form(
                 "subtotal",
                 "Subtotal",
@@ -1036,6 +1050,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "recommendedCharts" => 600.0,
         "analysisToolPak" => 420.0,
         "solver" => 460.0,
+        "solverOptions" => 400.0,
         _ => 380.0,
     };
     let window = egui::Window::new(app.ui.language.tr(&d.title))
@@ -1062,7 +1077,8 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "commandSearch" => command_search(app, ui, &mut d, &mut confirm),
                 "goalSeek" => goal_seek(app, ui, &mut d, &mut confirm),
                 "analysisToolPak" => analysis_toolpak(app, ui, &mut d, &mut confirm, &mut open),
-                "solver" => solver(ui, &mut d, &mut confirm, &mut open),
+                "solver" => solver(app, ui, &mut d, &mut confirm, &mut open),
+                "solverOptions" => solver_options(ui, &mut d, &mut open),
                 "solverResults" => solver_results(app, ui, &mut d, &mut open),
                 "spelling" => spelling(app, ui, &mut d, &mut open),
                 "agents" => {
@@ -2535,8 +2551,8 @@ fn analysis_toolpak(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confi
 }
 
 /// Data › Solver: the Solver Parameters form. Solve runs `data.solver` through the dialog's
-/// command; the result opens Solver Results.
-fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+/// command; the result opens Solver Results. Options… opens Solver Options over it.
+fn solver(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
     let text = |d: &Dialog, k: &str| d.values.get(k).map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).unwrap_or_default();
     let edit = |ui: &mut egui::Ui, d: &mut Dialog, k: &str, width: f32| {
         let mut t = text(d, k);
@@ -2628,6 +2644,9 @@ fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool
                 }
             }
         });
+        if ui.button("Options…").clicked() {
+            app.open_dialog("solverOptions", Json::Object(d.values.clone()));
+        }
     });
     ui.label(
         egui::RichText::new(match method.as_str() {
@@ -2650,6 +2669,104 @@ fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool
     });
 }
 
+/// Solver Options over Solver Parameters: All Methods, GRG Nonlinear and Evolutionary tabs. OK
+/// hands the values back to Solver Parameters, which solves with them and saves them with the
+/// model. GridCraft keeps no clock, so its limits are evaluations and generations.
+fn solver_options(ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool) {
+    ui.horizontal(|ui| {
+        for tab in ["All Methods", "GRG Nonlinear", "Evolutionary"] {
+            if ui.selectable_label(d.tab == tab, tab).clicked() {
+                d.tab = tab.to_string();
+            }
+        }
+    });
+    ui.separator();
+    let text = |d: &Dialog, k: &str| match d.values.get(k) {
+        Some(Json::String(t)) => t.clone(),
+        Some(Json::Null) | None => String::new(),
+        Some(Json::Number(n)) => n.as_f64().map(gridcraft_engine::core::number_to_text).unwrap_or_default(),
+        Some(v) => v.to_string(),
+    };
+    let field = |ui: &mut egui::Ui, d: &mut Dialog, label: &str, k: &str| {
+        ui.label(label);
+        let mut t = text(d, k);
+        if ui.add(egui::TextEdit::singleline(&mut t).desired_width(110.0)).changed() {
+            d.values.insert(k.into(), json!(t));
+        }
+        ui.end_row();
+    };
+    let check = |ui: &mut egui::Ui, d: &mut Dialog, label: &str, k: &str| {
+        let mut on = d.values.get(k).and_then(Json::as_bool).unwrap_or(false);
+        if ui.checkbox(&mut on, label).changed() {
+            d.values.insert(k.into(), json!(on));
+        }
+    };
+    egui::Grid::new(("solverOptions", d.tab.clone())).num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| match d.tab.as_str() {
+        "GRG Nonlinear" => {
+            field(ui, d, "Convergence:", "convergence");
+            ui.label("Derivatives:");
+            let central = d.values.get("derivatives").and_then(Json::as_str) != Some("forward");
+            ui.horizontal(|ui| {
+                if ui.radio(!central, "Forward").clicked() {
+                    d.values.insert("derivatives".into(), json!("forward"));
+                }
+                if ui.radio(central, "Central").clicked() {
+                    d.values.insert("derivatives".into(), json!("central"));
+                }
+            });
+            ui.end_row();
+            check(ui, d, "Use Multistart", "multistart");
+            ui.end_row();
+            field(ui, d, "Population Size:", "populationSize");
+            field(ui, d, "Random Seed:", "randomSeed");
+            check(ui, d, "Require Bounds on Variables", "requireBounds");
+            ui.end_row();
+        }
+        "Evolutionary" => {
+            field(ui, d, "Convergence:", "convergence");
+            field(ui, d, "Mutation Rate:", "mutationRate");
+            field(ui, d, "Population Size:", "populationSize");
+            field(ui, d, "Random Seed:", "randomSeed");
+            field(ui, d, "Max Generations without Improvement:", "generationsWithoutImprovement");
+            check(ui, d, "Require Bounds on Variables", "requireBounds");
+            ui.end_row();
+        }
+        _ => {
+            field(ui, d, "Constraint Precision:", "precision");
+            check(ui, d, "Use Automatic Scaling", "scaling");
+            ui.end_row();
+            check(ui, d, "Ignore Integer Constraints", "ignoreIntegers");
+            ui.end_row();
+            field(ui, d, "Integer Optimality (%):", "integerOptimality");
+            field(ui, d, "Max Evaluations:", "maxEvaluations");
+            field(ui, d, "Max Subproblems:", "maxSubproblems");
+            field(ui, d, "Max Feasible Solutions:", "maxFeasibleSolutions");
+        }
+    });
+    ui.label(
+        egui::RichText::new("Shared by both methods: Convergence, Population Size, Random Seed and Require Bounds. A blank limit is no limit.")
+            .small(),
+    );
+    let mut confirm = false;
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if ui.button("Reset All").clicked()
+            && let Json::Object(defaults) = gridcraft_engine::cmd::solver::option_defaults()
+        {
+            d.values = defaults;
+        }
+    });
+    ok_cancel(ui, &mut confirm, open);
+    if confirm {
+        if let Some(back) = d.back.as_mut() {
+            for (k, v) in &d.values {
+                back.values.insert(k.clone(), v.clone());
+            }
+        }
+        *open = false;
+    }
+}
+
 /// Solver Results: the outcome, and keeping or restoring the variable cells.
 fn solver_results(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool) {
     let message = d.values.get("message").and_then(Json::as_str).unwrap_or("").to_string();
@@ -2670,7 +2787,7 @@ fn solver_results(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &
     if solved {
         ui.add_space(4.0);
         ui.label("Reports:");
-        for (key, label) in [("answerReport", "Answer"), ("limitsReport", "Limits")] {
+        for (key, label) in [("answerReport", "Answer"), ("sensitivityReport", "Sensitivity"), ("limitsReport", "Limits")] {
             let mut on = d.values.get(key).and_then(Json::as_bool).unwrap_or(false);
             if ui.checkbox(&mut on, label).changed() {
                 d.values.insert(key.into(), json!(on));
@@ -2684,7 +2801,7 @@ fn solver_results(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &
         if changed && restore {
             app.run_or_alert("edit.undo", json!({}));
         }
-        let reports: Vec<&str> = [("answerReport", "answer"), ("limitsReport", "limits")]
+        let reports: Vec<&str> = [("answerReport", "answer"), ("sensitivityReport", "sensitivity"), ("limitsReport", "limits")]
             .into_iter()
             .filter(|(key, _)| d.values.get(*key).and_then(Json::as_bool) == Some(true))
             .map(|(_, kind)| kind)
